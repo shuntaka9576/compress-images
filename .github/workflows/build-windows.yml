@@ -1,0 +1,59 @@
+name: Build Windows app
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync --frozen --all-groups
+      - run: uv run --frozen pytest
+      - name: Build exe
+        run: >-
+          uv run --frozen pyinstaller --noconfirm --clean --onefile --windowed
+          --name ImageCompressor --icon=assets/app-icon.ico
+          --add-data "assets/app-icon.png;assets"
+          --collect-all pillow_heif --additional-hooks-dir=. app.py
+      - name: Smoke test bundled exe
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath .\dist\ImageCompressor.exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "ImageCompressor.exe self-test failed with exit code $($process.ExitCode)"
+          }
+      - name: Prepare release package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-package -Force
+          Copy-Item .\dist\ImageCompressor.exe .\release-package\ImageCompressor.exe
+          Copy-Item ".\output\pdf\はじめにお読みください.pdf" ".\release-package\はじめにお読みください.pdf"
+          Compress-Archive -Path .\release-package\* -DestinationPath .\dist\ImageCompressor-windows.zip -Force
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/ImageCompressor-windows.zip
+          archive: false
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (gh release view $env:GITHUB_REF_NAME 2>$null) {
+            gh release upload $env:GITHUB_REF_NAME .\dist\ImageCompressor-windows.zip --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME .\dist\ImageCompressor-windows.zip --generate-notes --title $env:GITHUB_REF_NAME
+          }
