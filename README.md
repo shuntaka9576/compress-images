@@ -49,6 +49,18 @@ CIは `windows-latest` 上でテストとexe生成を行い、完成したexe自
 
 ## 開発
 
+よく使う操作はMakefileへまとめています。
+Makefileは `uvx` 経由でプロジェクト指定のuvを使うため、手元のuvが古くてもそのまま実行できます。
+
+```bash
+make run
+make test
+make self-test
+make build-mac
+```
+
+個別にuvコマンドを実行する場合は次のとおりです。
+
 ```bash
 uv sync --frozen --all-groups
 uv run --frozen pytest
