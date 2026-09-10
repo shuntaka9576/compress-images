@@ -2,20 +2,35 @@ name: Build Windows app
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: CalVer tag created by tagpr
+        type: string
+        required: true
   push:
     branches:
       - main
     tags:
-      - "v*"
+      - "[0-9][0-9][0-9][0-9].[0-9][0-9][0-9][0-9].*"
   pull_request:
+
+permissions: {}
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
@@ -23,16 +38,31 @@ jobs:
       - run: uv python install
       - run: uv sync --frozen --all-groups
       - run: uv run --frozen pytest
+      - name: Embed Git version
+        id: version
+        shell: pwsh
+        run: |
+          $versionArgs = @()
+          if ($env:RELEASE_TAG) {
+            $versionArgs = @('--release-tag', $env:RELEASE_TAG)
+          }
+          uv run --frozen python tools/write_build_info.py @versionArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content build/build_info.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
       - name: Build exe
         run: >-
           uv run --frozen pyinstaller --noconfirm --clean --onefile --windowed
           --name ImageCompressor --icon=assets/app-icon.ico
           --add-data "assets/app-icon.png;assets"
+          --add-data "build/build_info.json;."
           --collect-all pillow_heif --additional-hooks-dir=. app.py
-      - name: Smoke test bundled exe
+      - name: Smoke test bundled exe and version
         shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $process = Start-Process -FilePath .\dist\ImageCompressor.exe -ArgumentList "--self-test" -Wait -PassThru
+          $process = Start-Process -FilePath .\dist\ImageCompressor.exe -ArgumentList @('--self-test', '--expected-version', $env:EXPECTED_VERSION) -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "ImageCompressor.exe self-test failed with exit code $($process.ExitCode)"
           }
@@ -48,13 +78,15 @@ jobs:
           path: dist/ImageCompressor-windows.zip
           archive: false
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != '' && github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if (gh release view $env:GITHUB_REF_NAME 2>$null) {
-            gh release upload $env:GITHUB_REF_NAME .\dist\ImageCompressor-windows.zip --clobber
+          gh release view $env:RELEASE_TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG .\dist\ImageCompressor-windows.zip --clobber
           } else {
-            gh release create $env:GITHUB_REF_NAME .\dist\ImageCompressor-windows.zip --generate-notes --title $env:GITHUB_REF_NAME
+            gh release create $env:RELEASE_TAG .\dist\ImageCompressor-windows.zip --verify-tag --generate-notes --title $env:RELEASE_TAG
           }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

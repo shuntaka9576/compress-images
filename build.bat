@@ -16,10 +16,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
+uv run --frozen python tools\write_build_info.py
+if errorlevel 1 (
+  echo Build version generation failed.
+  pause
+  exit /b 1
+)
+
 uv run --frozen pyinstaller --noconfirm --clean --onefile --windowed ^
   --name ImageCompressor ^
   --icon=assets\app-icon.ico ^
   --add-data "assets\app-icon.png;assets" ^
+  --add-data "build\build_info.json;." ^
   --collect-all pillow_heif ^
   --additional-hooks-dir=. ^
   app.py

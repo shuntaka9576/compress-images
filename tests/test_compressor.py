@@ -115,3 +115,21 @@ def test_find_images_ignores_unrelated_files(tmp_path: Path) -> None:
         (tmp_path / name).write_bytes(b"test")
 
     assert [path.name for path in find_images(tmp_path)] == ["a.jpg", "b.HEIC"]
+
+
+def test_48mp_portrait_jpeg_keeps_exact_output_size_after_reduced_decode(tmp_path):
+    source = tmp_path / '48mp.jpg'
+    exif = Image.Exif()
+    exif[274] = 6
+    im = Image.new('RGB', (8064, 6048), '#3184a7')
+    im.save(source, quality=90, exif=exif)
+    im.close()
+    options = ConversionOptions()
+    preview = preview_image(source, options)
+    result = compress_image(source, tmp_path/'converted', options)
+    assert result.original_size == (8064, 6048)
+    assert result.output_size == (1210, 1613)
+    assert preview.output_bytes == result.output_bytes
+    with Image.open(result.destination) as output:
+        assert not output.getexif()
+        assert max(abs(a-b) for a,b in zip(output.getpixel((600,800)), (49,132,167))) < 5

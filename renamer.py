@@ -11,6 +11,8 @@ from typing import Callable, Iterable, Sequence
 
 from PIL import Image, UnidentifiedImageError
 
+from compressor import publish_exclusive
+
 
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 COMPONENT_DATETIME = "datetime"  # 旧GUI内部形式との互換用
@@ -241,6 +243,7 @@ def build_naming_plan(
     custom_text: str = "",
     date_format: str = DATE_FORMAT_V4,
     should_cancel: Callable[[], bool] | None = None,
+    in_place: bool = False,
 ) -> list[NamingPlanItem]:
     """EXIF名で安全にコピーする計画を作る。プレビュー時点では書き込まない。"""
     if (
@@ -267,7 +270,7 @@ def build_naming_plan(
             )
             continue
 
-        destination_dir = _destination_directory(
+        destination_dir = source.parent if in_place else _destination_directory(
             source, output_root, source_root, preserve_tree
         )
         base = info.taken_at.strftime("%Y_%m_%d_%H%M")
@@ -309,7 +312,8 @@ def build_naming_plan(
                 filename = f"{base}_{number:02d}.jpg"
             destination = destination_dir / filename
             destination_key = _path_key(destination)
-            if destination_key not in reserved and not destination.exists():
+            same_source = in_place and destination == source
+            if destination_key not in reserved and (same_source or not destination.exists()):
                 break
             number += 1
 
@@ -319,7 +323,7 @@ def build_naming_plan(
             NamingPlanItem(
                 source=source,
                 destination=destination,
-                status="コピー予定",
+                status=("変更なし" if destination == source else "名前変更予定") if in_place else "コピー予定",
                 exif=info,
             )
         )
@@ -362,6 +366,8 @@ def copy_many(
     plan: Iterable[NamingPlanItem],
     on_result: Callable[[CopyResult], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    *,
+    in_place: bool = False,
 ) -> tuple[list[CopyResult], list[tuple[Path, Exception]]]:
     results: list[CopyResult] = []
     errors: list[tuple[Path, Exception]] = []
@@ -371,10 +377,25 @@ def copy_many(
         if should_cancel and should_cancel():
             break
         try:
-            result = copy_planned_file(item)
+            result = rename_planned_file(item) if in_place else copy_planned_file(item)
             results.append(result)
             if on_result:
                 on_result(result)
         except Exception as error:  # ファイル単位で続行し、最後にまとめて表示する。
             errors.append((item.source, error))
     return results, errors
+
+
+def rename_planned_file(item: NamingPlanItem) -> CopyResult:
+    if item.destination is None:
+        raise ValueError("スキップ対象は名前変更できません")
+    if item.source.is_symlink():
+        raise ValueError("リンクされた写真は名前変更できません。")
+    if item.source.parent.resolve() != item.destination.parent.resolve():
+        raise ValueError("名前変更は同じフォルダ内で行ってください。")
+    size = item.source.stat().st_size
+    if item.source != item.destination:
+        # FAT/exFATの写真フォルダでも利用でき、競合したファイルを上書きしない。
+        publish_exclusive(item.source, item.destination)
+        item.source.unlink()
+    return CopyResult(item.source, item.destination, size)

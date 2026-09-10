@@ -231,8 +231,8 @@ def page_one(pdf: canvas.Canvas) -> None:
     )
     y = info_box(
         pdf,
-        "元の写真は変更しません",
-        "どちらの処理も、結果は converted フォルダへ保存します。元の写真を消したり、名前を書き換えたりしません。",
+        "元の写真を残す方法・直接変更する方法",
+        "通常は converted へ保存し、元の写真を残します。元の場所で上書き・名前変更するボタンもあります（6ページ）。",
         y,
         fill=PALE_ORANGE,
         stroke=ORANGE,
@@ -335,8 +335,8 @@ def page_three(pdf: canvas.Canvas) -> None:
     y = step_card(
         pdf,
         1,
-        "写真またはフォルダをドロップする",
-        "画面下の一覧に、現在と変換後の予想サイズが表示されます。",
+        "写真を選択、またはドロップする",
+        "一覧に写真が表示されます。クリックで拡大し、チェックした写真だけを処理します。予想サイズは「サイズを計算」を押したときだけ計算します。",
         y,
         height=65,
     )
@@ -351,7 +351,7 @@ def page_three(pdf: canvas.Canvas) -> None:
     y = step_card(
         pdf,
         3,
-        "設定を確認して「まとめて変換」を押す",
+        "「○枚を元を残して変換」を押す",
         "初期設定は20%、品質80です。処理後は「保存先を開く」でJPEGを確認します。",
         y,
         height=70,
@@ -463,7 +463,7 @@ def page_four(pdf: canvas.Canvas) -> None:
     y = step_card(
         pdf,
         3,
-        "「名前を付けてコピー」を押す",
+        "「○枚を別名でコピー」を押す",
         "確認画面の後、converted へコピーします。元のJPEG名は変わりません。",
         y,
         height=65,
@@ -484,7 +484,7 @@ def page_five(pdf: canvas.Canvas) -> None:
     y = page_title(pdf, "4", "結果を確認する・困ったとき")
     y = info_box(
         pdf,
-        "元の写真はそのまま残ります",
+        "元の写真を残すボタンを使った場合",
         "結果は converted フォルダへ保存されます。確認が終わるまで、元の写真は削除しないでください。",
         y,
         fill=PALE_GREEN,
@@ -498,16 +498,16 @@ def page_five(pdf: canvas.Canvas) -> None:
             "写真があるフォルダを選び直します。名前整理ではJPEGだけが対象です。下のフォルダも探す場合は「サブフォルダも含める」をONにします。",
         ),
         (
-            "スキップと表示される",
+            "「変更できません」と表示される",
             "EXIFなし、撮影日時なし、読み込み不能などの理由を一覧で確認できます。スキップした写真はコピーされません。",
         ),
         (
             "同じ名前のファイルがすでにある",
-            "既存ファイルは上書きしません。連番を進めた別名で保存します。",
+            "コピーでは連番を進めます。直接変換で同名の別JPEGがある場合は、その写真を変更せずエラーにします。",
         ),
         (
             "途中で止めたい",
-            "「中止」を押します。すでに保存されたファイルは converted に残り、元の写真には影響しません。",
+            "「中止」を押すと、次の写真から処理を止めます。完了した保存・上書き・名前変更は取り消されません。",
         ),
     ]
     for title, body in topics:
@@ -526,7 +526,7 @@ def page_five(pdf: canvas.Canvas) -> None:
     info_box(
         pdf,
         "解決しないとき",
-        "画面下の一覧に表示された内容と、処理できなかった写真のファイル名を、アプリを受け取った方へお知らせください。",
+        "右上の「ヘルプ」でバージョンを確認し、一覧のエラー内容と写真のファイル名をお知らせください。ヘルプ内のタブで操作手順も読めます。",
         y,
         fill=PALE_RED,
         stroke=RED,
@@ -535,11 +535,45 @@ def page_five(pdf: canvas.Canvas) -> None:
     )
 
 
+def page_six(pdf: canvas.Canvas) -> None:
+    y = page_title(pdf, "5", "選んだ写真を元の場所で変更する")
+    y = info_box(
+        pdf, "チェックした写真だけが処理対象です",
+        "一覧に小さな写真が常に表示され、クリックすると右側で大きく見られます。不要な写真はチェックを外します。行は薄い色で残り、再チェックで対象に戻せます。写真を見るだけではチェックは変わりません。",
+        y, height=92,
+    )
+    y = step_card(
+        pdf, 1, "写真と設定を確認する",
+        "処理対象の枚数と一覧を確認します。圧縮の設定、または名前の部品・自由入力を整えます。",
+        y, height=72,
+    )
+    y = step_card(
+        pdf, 2, "元の場所で変更するボタンを押す",
+        "圧縮では「○枚を上書き変換…」、名前整理では「○枚の名前を変更…」を押します。converted は使いません。",
+        y, height=78,
+    )
+    y = step_card(
+        pdf, 3, "確認画面の一覧を見て実行する",
+        "元の場所と変更後の名前を確認します。取りやめる場合は「キャンセル」。完了後はチェックが解除されます。続ける写真に再びチェックを入れてください。",
+        y, height=78,
+    )
+    y = info_box(
+        pdf, "上書き変換は元に戻せません",
+        "JPEGは元の名前のまま上書きします。HEIC・PNGなどは同じ場所へJPEGを保存した後、元ファイルを削除します。撮影日時・GPSなどのEXIF情報も除去されます。同名の別JPEGがある場合は元画像を残し、エラーを表示します。",
+        y, fill=PALE_ORANGE, stroke=ORANGE, title_color=ORANGE, height=116,
+    )
+    info_box(
+        pdf, "名前変更では、画像の内容・撮影情報は変わりません",
+        "元のフォルダ内で名前だけ変えます。既存ファイルを避けて連番を決めるため、コピー用のプレビューと異なる場合があります。確認画面の名前が実際の変更内容です。撮影日時のないJPEGはスキップします。",
+        y, fill=PALE_GREEN, stroke=GREEN, title_color=GREEN, height=100,
+    )
+
+
 def generate() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     pdf = canvas.Canvas(str(OUTPUT), pagesize=A4, pageCompression=1)
     pdf.setTitle("写真まとめて整理 かんたん操作ガイド")
-    pages = (page_one, page_two, page_three, page_four, page_five)
+    pages = (page_one, page_two, page_three, page_four, page_five, page_six)
     for page_number, draw_page in enumerate(pages, start=1):
         draw_page(pdf)
         footer(pdf, page_number)

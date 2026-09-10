@@ -1,0 +1,43 @@
+name: tagpr
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: tagpr
+  cancel-in-progress: false
+
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+    outputs:
+      tag: ${{ steps.tagpr.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run tagpr
+        id: tagpr
+        uses: Songmu/tagpr@d1b8138b7a31075141b6cd64103de9485ced7ac9 # v1.20.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TZ: Asia/Tokyo
+
+  # GITHUB_TOKENによるタグpushは別ワークフローを起動しないため、直接呼ぶ。
+  release-windows:
+    needs: tagpr
+    if: needs.tagpr.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      release_tag: ${{ needs.tagpr.outputs.tag }}

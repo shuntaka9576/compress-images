@@ -160,12 +160,13 @@ def _prepare_image(source: Path, options: ConversionOptions) -> _PreparedImage:
     with Image.open(source) as opened:
         original_size = opened.size
         icc_profile = opened.info.get("icc_profile")
-        image = ImageOps.exif_transpose(opened)
+        # Compute the exact target before draft() changes the decoder dimensions.
+        # Reducing before EXIF rotation avoids copying a full-size phone image.
+        target_size = scaled_size(original_size, options.scale_percent)
+        opened.draft("RGB", target_size)
+        image = opened.resize(target_size, Image.Resampling.LANCZOS)
+        ImageOps.exif_transpose(image, in_place=True)
         image = _to_rgb(image)
-        image = image.resize(
-            scaled_size(image.size, options.scale_percent),
-            Image.Resampling.LANCZOS,
-        )
 
         if options.target_kb is None:
             quality = options.jpeg_quality
@@ -205,20 +206,36 @@ def compress_image(
     source: Path,
     output_dir: Path,
     options: ConversionOptions,
+    *,
+    in_place: bool = False,
 ) -> ConversionResult:
+    if in_place and source.is_symlink():
+        raise ValueError("リンクされた写真は上書きできません。")
+    destination = in_place_destination(source) if in_place else None
+    if in_place and destination != source and destination.exists():
+        raise FileExistsError(f"同名のJPEGがあるため変更しません: {destination.name}")
+    source_stat = source.stat()
     prepared = _prepare_image(source, options)
+    if in_place:
+        output_dir = source.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-    destination = _available_destination(output_dir, source.stem)
+    destination = destination or _available_destination(output_dir, source.stem)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb", suffix=".jpg", dir=output_dir, delete=False
         ) as temporary:
-            temporary.write(prepared.data)
             temp_path = Path(temporary.name)
-        os.replace(temp_path, destination)
-        source_stat = source.stat()
-        os.utime(destination, (source_stat.st_atime, source_stat.st_mtime))
+            temporary.write(prepared.data)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.utime(temp_path, (source_stat.st_atime, source_stat.st_mtime))
+        if in_place and destination != source:
+            # 排他的に保存するため、確認後に同名ファイルが増えても上書きしない。
+            publish_exclusive(temp_path, destination)
+            source.unlink()
+        else:
+            os.replace(temp_path, destination)
     finally:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
@@ -233,12 +250,38 @@ def compress_image(
     )
 
 
+def in_place_destination(source: Path) -> Path:
+    """JPEGは拡張子も維持し、他形式だけ同じ場所の.jpgへ置き換える。"""
+    return source if source.suffix.lower() in {".jpg", ".jpeg"} else source.with_suffix(".jpg")
+
+
+def publish_exclusive(source: Path, destination: Path) -> None:
+    """既存ファイルを上書きせずコピーする。失敗時は未完成の出力だけ消す。"""
+    import shutil
+
+    created = False
+    try:
+        with destination.open("xb") as output:
+            created = True
+            with source.open("rb") as original:
+                shutil.copyfileobj(original, output)
+            output.flush()
+            os.fsync(output.fileno())
+        shutil.copystat(source, destination)
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
+
+
 def compress_many(
     sources: Iterable[Path],
     output_dir: Path,
     options: ConversionOptions,
     on_result: Callable[[ConversionResult], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    *,
+    in_place: bool = False,
 ) -> tuple[list[ConversionResult], list[tuple[Path, Exception]]]:
     results: list[ConversionResult] = []
     errors: list[tuple[Path, Exception]] = []
@@ -246,7 +289,7 @@ def compress_many(
         if should_cancel and should_cancel():
             break
         try:
-            result = compress_image(source, output_dir, options)
+            result = compress_image(source, output_dir, options, in_place=in_place)
             results.append(result)
             if on_result:
                 on_result(result)
