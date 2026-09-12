@@ -1,4 +1,8 @@
 """Exercise Windows Tk/TkDnD and real widget bindings on the CI desktop."""
+from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -21,7 +25,7 @@ def pump_until(app, condition, timeout=15):
     raise AssertionError("Windows GUI did not reach the expected state")
 
 
-@pytest.fixture
+@contextmanager
 def gui():
     app = ImageCompressorApp()
     app.geometry("1400x1000")
@@ -73,7 +77,7 @@ def click_target(app, row):
     app.update()
 
 
-def test_windows_check_click_preview_scroll_and_busy_state(gui, tmp_path):
+def check_click_preview_scroll_and_busy_state(gui, tmp_path):
     sources = load_photos(gui, tmp_path, 500)
     tree = gui.preview_tree
     rows = tree.get_children()
@@ -107,7 +111,7 @@ def test_windows_check_click_preview_scroll_and_busy_state(gui, tmp_path):
     assert all(source.exists() for source in sources)
 
 
-def test_windows_unavailable_photo_and_native_help(gui, tmp_path):
+def unavailable_photo_and_native_help(gui, tmp_path):
     sources = load_photos(gui, tmp_path, 2)
     Image.new("RGB", (160, 120), "blue").save(sources[1])
     gui.operation_mode.set(MODE_RENAME)
@@ -122,3 +126,37 @@ def test_windows_unavailable_photo_and_native_help(gui, tmp_path):
     assert gui.help_window.winfo_exists()
     assert len(gui.help_window.notebook.tabs()) == 4
     gui.help_window.destroy()
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [check_click_preview_scroll_and_busy_state, unavailable_photo_and_native_help],
+    ids=lambda scenario: scenario.__name__,
+)
+def test_windows_gui(scenario, request, tmp_path):
+    # A real application creates one Tk root per process. Recreating it for
+    # another test can leave Tcl/Tk, TkDnD and pending workers from the first
+    # root alive, causing intermittent tk.tcl/button.tcl initialization errors.
+    # Run each scenario in a fresh interpreter while retaining pytest failures
+    # and callback-error checks from the actual GUI test.
+    nodeid = request.node.nodeid
+    child_marker = "COMPRESS_IMAGES_GUI_TEST_NODE"
+    if os.environ.get(child_marker) != nodeid:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", nodeid],
+            cwd=Path(__file__).resolve().parents[1],
+            env={**os.environ, child_marker: nodeid, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"GUI scenario {nodeid} failed (exit {result.returncode}):\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        return
+
+    with gui() as app:
+        scenario(app, tmp_path)
